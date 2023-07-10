@@ -9,6 +9,6 @@ setup(
     author="Lucas D. Lingle",
     install_requires=[
         'mpi4py==3.0.3',
-        'torch==1.8.1'
+        'torch==1.8.1+cu111'
     ]
 )
