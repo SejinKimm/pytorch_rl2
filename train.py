@@ -15,6 +15,7 @@ from rl2.agents.architectures.gru import GRU
 from rl2.agents.architectures.lstm import LSTM
 from rl2.agents.architectures.snail import SNAIL
 from rl2.agents.architectures.transformer import Transformer
+#from rl2.agents.architectures.transformer import DT
 from rl2.agents.heads.policy_heads import LinearPolicyHead
 from rl2.agents.heads.value_heads import LinearValueHead
 from rl2.agents.integration.policy_net import StatefulPolicyNet
@@ -166,6 +167,12 @@ def create_net(
 
 
 def main():
+    device = tc.device("cuda") 
+
+    print('Device:', device)
+    print('Current cuda device:', tc.cuda.current_device())
+    print('Count of using GPUs:', tc.cuda.device_count())
+
     args = create_argparser().parse_args()
     comm = get_comm()
 
@@ -184,7 +191,7 @@ def main():
         num_states=args.num_states,
         num_actions=args.num_actions,
         num_features=args.num_features,
-        context_size=args.meta_episode_len)
+        context_size=args.meta_episode_len).to(tc.device('cuda'))
 
     value_net = create_net(
         net_type='value',
@@ -193,7 +200,7 @@ def main():
         num_states=args.num_states,
         num_actions=args.num_actions,
         num_features=args.num_features,
-        context_size=args.meta_episode_len)
+        context_size=args.meta_episode_len).to(tc.device('cuda'))
 
     policy_optimizer = tc.optim.AdamW(
         get_weight_decay_param_groups(policy_net, args.adam_wd),
@@ -273,8 +280,8 @@ def main():
 
     training_loop(
         env=env,
-        policy_net=policy_net,
-        value_net=value_net,
+        policy_net=policy_net.to(tc.device('cuda')),
+        value_net=value_net.to(tc.device('cuda')),
         policy_optimizer=policy_optimizer,
         value_optimizer=value_optimizer,
         policy_scheduler=policy_scheduler,
@@ -292,8 +299,7 @@ def main():
         pol_iters_so_far=pol_iters_so_far,
         policy_checkpoint_fn=policy_checkpoint_fn,
         value_checkpoint_fn=value_checkpoint_fn,
-        comm=comm)
-
+        comm=comm).to(tc.device('cuda'))
 
 if __name__ == '__main__':
     main()

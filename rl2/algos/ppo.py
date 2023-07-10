@@ -48,8 +48,8 @@ def compute_losses(
             list(map(lambda metaep: getattr(metaep, field), meta_episodes)),
             axis=0)
         if dtype == 'long':
-            return tc.LongTensor(mb_field)
-        return tc.FloatTensor(mb_field)
+            return tc.LongTensor(mb_field).to(tc.device('cuda'))
+        return tc.FloatTensor(mb_field).to(tc.device('cuda'))
 
     # minibatch data tensors
     mb_obs = get_tensor('obs', 'long')
@@ -183,8 +183,8 @@ def training_loop(
             # collect one meta-episode and append it to the list
             meta_episode = generate_meta_episode(
                 env=env,
-                policy_net=policy_net,
-                value_net=value_net,
+                policy_net=policy_net.to(tc.device('cuda')),
+                value_net=value_net.to(tc.device('cuda')),
                 meta_episode_len=meta_episode_len)
             meta_episode = assign_credit(
                 meta_episode=meta_episode,

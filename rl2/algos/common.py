@@ -55,37 +55,37 @@ def generate_meta_episode(
     a_tm1 = np.array([0])
     r_tm1 = np.array([0.0])
     d_tm1 = np.array([1.0])
-    h_tm1_policy_net = policy_net.initial_state(batch_size=1)
-    h_tm1_value_net = value_net.initial_state(batch_size=1)
+    h_tm1_policy_net = policy_net.to(tc.device('cuda')).initial_state(batch_size=1)
+    h_tm1_value_net = value_net.to(tc.device('cuda')).initial_state(batch_size=1)
 
     for t in range(0, meta_episode_len):
         pi_dist_t, h_t_policy_net = policy_net(
-            curr_obs=tc.LongTensor(o_t),
-            prev_action=tc.LongTensor(a_tm1),
-            prev_reward=tc.FloatTensor(r_tm1),
-            prev_done=tc.FloatTensor(d_tm1),
+            curr_obs=tc.LongTensor(o_t).to(tc.device('cuda')),
+            prev_action=tc.LongTensor(a_tm1).to(tc.device('cuda')),
+            prev_reward=tc.FloatTensor(r_tm1).to(tc.device('cuda')),
+            prev_done=tc.FloatTensor(d_tm1).to(tc.device('cuda')),
             prev_state=h_tm1_policy_net)
 
         vpred_t, h_t_value_net = value_net(
-            curr_obs=tc.LongTensor(o_t),
-            prev_action=tc.LongTensor(a_tm1),
-            prev_reward=tc.FloatTensor(r_tm1),
-            prev_done=tc.FloatTensor(d_tm1),
+            curr_obs=tc.LongTensor(o_t).to(tc.device('cuda')),
+            prev_action=tc.LongTensor(a_tm1).to(tc.device('cuda')),
+            prev_reward=tc.FloatTensor(r_tm1).to(tc.device('cuda')),
+            prev_done=tc.FloatTensor(d_tm1).to(tc.device('cuda')),
             prev_state=h_tm1_value_net)
 
         a_t = pi_dist_t.sample()
         log_prob_a_t = pi_dist_t.log_prob(a_t)
 
         o_tp1, r_t, done_t, _ = env.step(
-            action=a_t.squeeze(0).detach().numpy(),
+            action=a_t.squeeze(0).detach().cpu().numpy(),
             auto_reset=True)
 
         meta_episode.obs[t] = o_t[0]
-        meta_episode.acs[t] = a_t.squeeze(0).detach().numpy()
+        meta_episode.acs[t] = a_t.squeeze(0).detach().cpu().numpy()
         meta_episode.rews[t] = r_t
         meta_episode.dones[t] = float(done_t)
-        meta_episode.logpacs[t] = log_prob_a_t.squeeze(0).detach().numpy()
-        meta_episode.vpreds[t] = vpred_t.squeeze(0).detach().numpy()
+        meta_episode.logpacs[t] = log_prob_a_t.squeeze(0).detach().cpu().numpy()
+        meta_episode.vpreds[t] = vpred_t.squeeze(0).detach().cpu().numpy()
 
         o_t = np.array([o_tp1])
         a_tm1 = np.array([meta_episode.acs[t]])

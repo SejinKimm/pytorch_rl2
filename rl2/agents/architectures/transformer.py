@@ -195,6 +195,145 @@ class TransformerLayer(tc.nn.Module):
 
         return x, new_kvs
 
+class DTLayer(tc.nn.Module):
+    def __init__(
+            self,
+            input_dim,
+            feature_dim,
+            num_heads,
+            position_encoding_style,
+            attention_style,
+            connection_style,
+            layer_ordering,
+            row_len=None,
+            activation=tc.nn.ReLU
+    ):
+        """
+        Args:
+            input_dim: input dimensionality.
+            feature_dim: feature dimensionality for each sublayer.
+            num_heads: number of attention heads.
+            position_encoding_style: one of 'abs', 'rel'.
+            attention_style: one of 'full', 'row', 'column', or 'previous_row'.
+            connection_style: one of 'plain', 'residual', 'dense'.
+            layer_ordering: ordering of activation, function, and normalization.
+                should be letters chosen from 'a', 'f', 'n' in any order.
+                letter 'f' cannot be omitted.
+            row_len: required if attention_style is not 'full'
+            activation: activation function to use in ff and anywhere else.
+        """
+        assert position_encoding_style in ['abs', 'rel']
+        assert attention_style in ['full', 'row', 'previous_row', 'column']
+        assert connection_style in ['plain', 'residual', 'dense']
+        assert attention_style == 'full' or row_len is not None
+        assert len(layer_ordering) == len(set(layer_ordering))
+        assert set(layer_ordering) <= {'a', 'f', 'n'}
+        assert 'f' in set(layer_ordering)
+
+        super().__init__()
+        self._input_dim = input_dim
+        self._feature_dim = feature_dim
+        self._num_heads = num_heads
+        self._num_features_per_head = self._feature_dim // self._num_heads
+        self._position_encoding_style = position_encoding_style
+        self._attention_style = attention_style
+        self._connection_style = connection_style
+        self._layer_ordering = list(layer_ordering)
+        self._row_len = row_len
+        self._activation = activation
+
+        self._attn = MultiheadSelfAttention(
+            input_dim=self._attn_input_dim,
+            num_heads=self._num_heads,
+            num_head_features=self._num_features_per_head,
+            position_encoding_style=self._position_encoding_style,
+            attention_style=self._attention_style,
+            row_len=self._row_len)
+        self._proj = tc.nn.Linear(
+            in_features=(self._num_heads * self._num_features_per_head),
+            out_features=self._feature_dim,
+            bias=False)
+        tc.nn.init.xavier_normal_(self._proj.weight)
+
+        self._ff = FF(
+            input_dim=self._ff_input_dim,
+            hidden_dim=self._feature_dim,
+            output_dim=self._feature_dim,
+            activation=self._activation)
+
+        if 'n' in self._layer_ordering:
+            if self._layer_ordering.index('n') < self._layer_ordering.index('f'):
+                self._attn_layer_norm = LayerNorm(units=self._attn_input_dim)
+                self._ff_layer_norm = LayerNorm(units=self._ff_input_dim)
+            else:
+                self._attn_layer_norm = LayerNorm(units=self._feature_dim)
+                self._ff_layer_norm = LayerNorm(units=self._feature_dim)
+
+        if 'a' in self._layer_ordering:
+            self._attn_act = self._activation()
+            self._ff_act = self._activation()
+
+    @property
+    def _attn_input_dim(self):
+        return self._input_dim
+
+    @property
+    def _ff_input_dim(self):
+        if self._connection_style != 'dense':
+            return self._feature_dim
+        return self._attn_input_dim + self._feature_dim
+
+    @property
+    def output_dim(self):
+        if self._connection_style != 'dense':
+            return self._feature_dim
+        return self._ff_input_dim + self._feature_dim
+
+    def forward(self, inputs, past_kvs=None):
+        """
+        Args:
+            inputs: input vec tensor of shape [B, T2, I]
+            past_kvs: optional past kvs
+
+        Returns:
+            output tensor of shape [B, T2, I], and new kvs
+        """
+        x = inputs
+
+        i = inputs
+        for letter in self._layer_ordering:
+            if letter == 'a':
+                x = self._attn_act(x)
+            elif letter == 'n':
+                x = self._attn_layer_norm(x)
+            elif letter == 'f':
+                x, new_kvs = self._attn(x, past_kvs=past_kvs)
+                x = self._proj(x)
+                if self._connection_style == 'residual':
+                    x += i
+            else:
+                raise NotImplementedError
+
+        if self._connection_style == 'dense':
+            x = tc.cat((i, x), dim=-1)
+
+        i = x
+        for letter in self._layer_ordering:
+            if letter == 'a':
+                x = self._ff_act(x)
+            elif letter == 'n':
+                x = self._ff_layer_norm(x)
+            elif letter == 'f':
+                x = self._ff(x)
+                if self._connection_style == 'residual':
+                    x += i
+            else:
+                raise NotImplementedError
+
+        if self._connection_style == 'dense':
+            x = tc.cat((i, x), dim=-1)
+
+        return x, new_kvs
 
 class Transformer(tc.nn.Module):
     def __init__(
@@ -336,8 +475,8 @@ class Transformer(tc.nn.Module):
         if self._connection_style != 'dense':
             inputs = inputs + pos_embs
         else:
-            pos_embs = tc.tile(pos_embs, [inputs.shape[0], 1, 1])
-            inputs = tc.cat((inputs, pos_embs), dim=-1)
+            pos_embs = tc.tile(pos_embs, [inputs.shape[0], 1, 1]).to(tc.device('cuda'))
+            inputs = tc.cat((inputs, pos_embs), dim=-1).to(tc.device('cuda'))
         return inputs
 
     def _run_input_logic(self, inputs):

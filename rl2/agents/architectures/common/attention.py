@@ -9,29 +9,29 @@ import torch as tc
 
 @functools.lru_cache
 def sinusoidal_embeddings(src_len, d_model, reverse=False):
-    pos_seq = tc.arange(src_len)
-    inv_freq = 1 / (10000 ** (tc.arange(0, d_model, 2) / d_model))
+    pos_seq = tc.arange(src_len).to(tc.device('cuda'))
+    inv_freq = 1 / (10000 ** (tc.arange(0, d_model, 2).to(tc.device('cuda')) / d_model))
     sinusoid_input = pos_seq.view(-1, 1) * inv_freq.view(1, -1)
-    pos_emb = tc.cat((tc.sin(sinusoid_input), tc.cos(sinusoid_input)), dim=-1)
+    pos_emb = tc.cat((tc.sin(sinusoid_input).to(tc.device('cuda')), tc.cos(sinusoid_input).to(tc.device('cuda'))), dim=-1).to(tc.device('cuda'))
     if reverse:
-        pos_emb = tc.flip(pos_emb, dims=(0,))
+        pos_emb = tc.flip(pos_emb, dims=(0,)).to(tc.device('cuda'))
     return pos_emb
 
 
 @functools.lru_cache
 def get_mask(dest_len, src_len):
-    i = tc.arange(dest_len).view(dest_len, 1)
-    j = tc.arange(src_len).view(1, src_len)
+    i = tc.arange(dest_len).view(dest_len, 1).to(tc.device('cuda'))
+    j = tc.arange(src_len).view(1, src_len).to(tc.device('cuda'))
     m = i >= j - (src_len - dest_len)
     return m.int()
 
 
 def masked_self_attention(qs, ks, vs, use_mask=True):
-    scores = tc.bmm(qs, ks.permute(0, 2, 1))
+    scores = tc.bmm(qs, ks.permute(0, 2, 1)).to(tc.device('cuda'))
     scores /= qs.shape[-1] ** 0.5
 
     if use_mask:
-        mask = get_mask(dest_len=qs.shape[1], src_len=ks.shape[1])
+        mask = get_mask(dest_len=qs.shape[1], src_len=ks.shape[1]).to(tc.device('cuda'))
         mask = mask.view(1, *mask.shape)
         scores = scores * mask - 1e10 * (1 - mask)
 
@@ -56,8 +56,8 @@ def rel_shift(inputs):
 def relative_masked_self_attention(qs, ks, vs, rs, u_, v_, use_mask=True):
     ac_qs = qs + u_.unsqueeze(1)
     bd_qs = qs + v_.unsqueeze(1)
-    ac = tc.bmm(ac_qs, ks.permute(0, 2, 1))
-    bd = tc.bmm(bd_qs, rs.permute(0, 2, 1))
+    ac = tc.bmm(ac_qs, ks.permute(0, 2, 1)).to(tc.device('cuda'))
+    bd = tc.bmm(bd_qs, rs.permute(0, 2, 1)).to(tc.device('cuda'))
     bd = rel_shift(bd)
 
     bd = bd[:, :, 0:ks.shape[1]]  # this is a no-op unless prev row attn is used
@@ -69,7 +69,7 @@ def relative_masked_self_attention(qs, ks, vs, rs, u_, v_, use_mask=True):
         mask = mask.view(1, *mask.shape)
         scores = scores * mask - 1e10 * (1 - mask)
 
-    ws = tc.nn.Softmax(dim=-1)(scores)
+    ws = tc.nn.Softmax(dim=-1)(scores).to(tc.device('cuda'))
     output = tc.bmm(ws, vs)
     return output
 
@@ -99,21 +99,21 @@ class MultiheadSelfAttention(tc.nn.Module):
         self._qkv_linear = tc.nn.Linear(
             in_features=self._input_dim,
             out_features=(self._num_heads * self._num_head_features * 3),
-            bias=False)
-        tc.nn.init.xavier_normal_(self._qkv_linear.weight)
+            bias=False).to(tc.device('cuda'))
+        tc.nn.init.xavier_normal_(self._qkv_linear.weight).to(tc.device('cuda'))
 
         if self._position_encoding_style == 'rel':
             self._r_linear = tc.nn.Linear(
                 in_features=self._input_dim,
                 out_features=(self._num_heads * self._num_head_features),
-                bias=False)
-            tc.nn.init.xavier_normal_(self._r_linear.weight)
+                bias=False).to(tc.device('cuda'))
+            tc.nn.init.xavier_normal_(self._r_linear.weight).to(tc.device('cuda'))
             self._u = tc.nn.Parameter(
                 tc.zeros(size=(self._num_heads * self._num_head_features,),
-                         dtype=tc.float32))
+                         dtype=tc.float32).to(tc.device('cuda'))).to(tc.device('cuda'))
             self._v = tc.nn.Parameter(
                 tc.zeros(size=(self._num_heads * self._num_head_features,),
-                         dtype=tc.float32))
+                         dtype=tc.float32).to(tc.device('cuda'))).to(tc.device('cuda'))
 
     def attn_preop(self, qs, ks, vs, sampling):
         assert type(qs) == type(ks) == type(vs)
@@ -122,9 +122,9 @@ class MultiheadSelfAttention(tc.nn.Module):
 
         if self._attention_style == 'full':
             if sampling:
-                qs = tc.stack(qs, dim=1)
-                ks = tc.stack(ks, dim=1)
-                vs = tc.stack(vs, dim=1)
+                qs = tc.stack(qs, dim=1).to(tc.device('cuda'))
+                ks = tc.stack(ks, dim=1).to(tc.device('cuda'))
+                vs = tc.stack(vs, dim=1).to(tc.device('cuda'))
                 return qs, ks, vs, qs.shape[0]
             else:
                 return qs, ks, vs, qs.shape[0]
@@ -136,16 +136,16 @@ class MultiheadSelfAttention(tc.nn.Module):
                 row_flat_idx = row_idx * self._row_len
                 ks = ks[row_flat_idx:]  # get relevant row
                 vs = vs[row_flat_idx:]
-                qs = tc.stack(qs, dim=1)
-                ks = tc.stack(ks, dim=1)
-                vs = tc.stack(vs, dim=1)
+                qs = tc.stack(qs, dim=1).to(tc.device('cuda'))
+                ks = tc.stack(ks, dim=1).to(tc.device('cuda'))
+                vs = tc.stack(vs, dim=1).to(tc.device('cuda'))
                 return qs, ks, vs, qs.shape[0]
             else:
                 assert qs.shape[1] == ks.shape[1] == vs.shape[1]
                 assert qs.shape[1] % self._row_len == 0
-                qs = tc.reshape(qs, [-1, self._row_len, qs.shape[-1]])
-                ks = tc.reshape(ks, [-1, self._row_len, ks.shape[-1]])
-                vs = tc.reshape(vs, [-1, self._row_len, vs.shape[-1]])
+                qs = tc.reshape(qs, [-1, self._row_len, qs.shape[-1]]).to(tc.device('cuda'))
+                ks = tc.reshape(ks, [-1, self._row_len, ks.shape[-1]]).to(tc.device('cuda'))
+                vs = tc.reshape(vs, [-1, self._row_len, vs.shape[-1]]).to(tc.device('cuda'))
                 return qs, ks, vs, qs.shape[0]
 
         if self._attention_style == 'previous_row':
@@ -156,28 +156,28 @@ class MultiheadSelfAttention(tc.nn.Module):
                     prev_row_flat_idx = (row_idx - 1) * self._row_len
                     ks = ks[prev_row_flat_idx:prev_row_flat_idx+self._row_len]
                     vs = vs[prev_row_flat_idx:prev_row_flat_idx+self._row_len]
-                    qs = tc.stack(qs, dim=1)
-                    ks = tc.stack(ks, dim=1)
-                    vs = tc.stack(vs, dim=1)
+                    qs = tc.stack(qs, dim=1).to(tc.device('cuda'))
+                    ks = tc.stack(ks, dim=1).to(tc.device('cuda'))
+                    vs = tc.stack(vs, dim=1).to(tc.device('cuda'))
                     return qs, ks, vs, qs.shape[0]
                 else:
-                    qs = tc.stack(qs, dim=1)
+                    qs = tc.stack(qs, dim=1).to(tc.device('cuda'))
                     prev_row_shape = [qs.shape[0], self._row_len, qs.shape[2]]
-                    ks = tc.zeros(size=prev_row_shape, dtype=tc.float32)
-                    vs = tc.zeros(size=prev_row_shape, dtype=tc.float32)
+                    ks = tc.zeros(size=prev_row_shape, dtype=tc.float32).to(tc.device('cuda'))
+                    vs = tc.zeros(size=prev_row_shape, dtype=tc.float32).to(tc.device('cuda'))
                     return qs, ks, vs, qs.shape[0]
             else:
                 assert qs.shape[1] == ks.shape[1] == vs.shape[1]
                 assert qs.shape[1] % self._row_len == 0
                 n_rows = qs.shape[1] // self._row_len
-                qs = tc.reshape(qs, [-1, n_rows, self._row_len, qs.shape[-1]])
-                ks = tc.reshape(ks, [-1, n_rows, self._row_len, ks.shape[-1]])
-                vs = tc.reshape(vs, [-1, n_rows, self._row_len, vs.shape[-1]])
-                ks = tc.nn.functional.pad(ks[:,:-1,:,:], (0,0,0,0,1,0))
-                vs = tc.nn.functional.pad(vs[:,:-1,:,:], (0,0,0,0,1,0))
-                qs = tc.reshape(qs, [-1, self._row_len, qs.shape[-1]])
-                ks = tc.reshape(ks, [-1, self._row_len, ks.shape[-1]])
-                vs = tc.reshape(vs, [-1, self._row_len, vs.shape[-1]])
+                qs = tc.reshape(qs, [-1, n_rows, self._row_len, qs.shape[-1]]).to(tc.device('cuda'))
+                ks = tc.reshape(ks, [-1, n_rows, self._row_len, ks.shape[-1]]).to(tc.device('cuda'))
+                vs = tc.reshape(vs, [-1, n_rows, self._row_len, vs.shape[-1]]).to(tc.device('cuda'))
+                ks = tc.nn.functional.pad(ks[:,:-1,:,:], (0,0,0,0,1,0)).to(tc.device('cuda'))
+                vs = tc.nn.functional.pad(vs[:,:-1,:,:], (0,0,0,0,1,0)).to(tc.device('cuda'))
+                qs = tc.reshape(qs, [-1, self._row_len, qs.shape[-1]]).to(tc.device('cuda'))
+                ks = tc.reshape(ks, [-1, self._row_len, ks.shape[-1]]).to(tc.device('cuda'))
+                vs = tc.reshape(vs, [-1, self._row_len, vs.shape[-1]]).to(tc.device('cuda'))
                 return qs, ks, vs, qs.shape[0]
 
         if self._attention_style == 'column':
@@ -186,23 +186,23 @@ class MultiheadSelfAttention(tc.nn.Module):
                 column_flat_idx = (len(ks)-1) % self._row_len
                 ks = ks[column_flat_idx::self._row_len]  # get relevant column
                 vs = vs[column_flat_idx::self._row_len]
-                qs = tc.stack(qs, dim=1)
-                ks = tc.stack(ks, dim=1)
-                vs = tc.stack(vs, dim=1)
+                qs = tc.stack(qs, dim=1).to(tc.device('cuda'))
+                ks = tc.stack(ks, dim=1).to(tc.device('cuda'))
+                vs = tc.stack(vs, dim=1).to(tc.device('cuda'))
                 return qs, ks, vs, qs.shape[0]
             else:
                 assert qs.shape[1] == ks.shape[1] == vs.shape[1]
                 assert qs.shape[1] % self._row_len == 0
                 n_rows = qs.shape[1] // self._row_len
-                qs = tc.reshape(qs, [-1, n_rows, self._row_len, qs.shape[-1]])
-                ks = tc.reshape(ks, [-1, n_rows, self._row_len, ks.shape[-1]])
-                vs = tc.reshape(vs, [-1, n_rows, self._row_len, vs.shape[-1]])
+                qs = tc.reshape(qs, [-1, n_rows, self._row_len, qs.shape[-1]]).to(tc.device('cuda'))
+                ks = tc.reshape(ks, [-1, n_rows, self._row_len, ks.shape[-1]]).to(tc.device('cuda'))
+                vs = tc.reshape(vs, [-1, n_rows, self._row_len, vs.shape[-1]]).to(tc.device('cuda'))
                 qs = qs.permute(0, 2, 1, 3)
                 ks = ks.permute(0, 2, 1, 3)
                 vs = vs.permute(0, 2, 1, 3)
-                qs = tc.reshape(qs, [-1, n_rows, qs.shape[-1]])
-                ks = tc.reshape(ks, [-1, n_rows, ks.shape[-1]])
-                vs = tc.reshape(vs, [-1, n_rows, vs.shape[-1]])
+                qs = tc.reshape(qs, [-1, n_rows, qs.shape[-1]]).to(tc.device('cuda'))
+                ks = tc.reshape(ks, [-1, n_rows, ks.shape[-1]]).to(tc.device('cuda'))
+                vs = tc.reshape(vs, [-1, n_rows, vs.shape[-1]]).to(tc.device('cuda'))
                 return qs, ks, vs, qs.shape[0]
 
         raise NotImplementedError
@@ -217,14 +217,14 @@ class MultiheadSelfAttention(tc.nn.Module):
             if sampling:
                 return attn_out
             else:
-                attn_out = tc.reshape(attn_out, [-1, input_len, attn_out.shape[-1]])
+                attn_out = tc.reshape(attn_out, [-1, input_len, attn_out.shape[-1]]).to(tc.device('cuda'))
                 return attn_out
 
         if self._attention_style == 'previous_row':
             if sampling:
                 return attn_out
             else:
-                attn_out = tc.reshape(attn_out, [-1, input_len, attn_out.shape[-1]])
+                attn_out = tc.reshape(attn_out, [-1, input_len, attn_out.shape[-1]]).to(tc.device('cuda'))
                 return attn_out
 
         if self._attention_style == 'column':
@@ -233,18 +233,18 @@ class MultiheadSelfAttention(tc.nn.Module):
             else:
                 n_rows = input_len // self._row_len
                 transposed_block_shape = [-1, self._row_len, n_rows, attn_out.shape[-1]]
-                attn_out = tc.reshape(attn_out, transposed_block_shape)
+                attn_out = tc.reshape(attn_out, transposed_block_shape).to(tc.device('cuda'))
                 attn_out = attn_out.permute(0, 2, 1, 3)
-                attn_out = tc.reshape(attn_out, [-1, input_len, attn_out.shape[-1]])
+                attn_out = tc.reshape(attn_out, [-1, input_len, attn_out.shape[-1]]).to(tc.device('cuda'))
                 return attn_out
 
         raise NotImplementedError
 
     def split_heads(self, inputs):
-        return tc.cat(tc.chunk(inputs, self._num_heads, dim=-1), dim=0)
+        return tc.cat(tc.chunk(inputs, self._num_heads, dim=-1), dim=0).to(tc.device('cuda'))
 
     def merge_heads(self, inputs):
-        return tc.cat(tc.chunk(inputs, self._num_heads, dim=0), dim=-1)
+        return tc.cat(tc.chunk(inputs, self._num_heads, dim=0), dim=-1).to(tc.device('cuda'))
 
     def forward(self, inputs, past_kvs=None):
         """
@@ -275,8 +275,8 @@ class MultiheadSelfAttention(tc.nn.Module):
         else:
             if past_kvs is not None:
                 past_ks, past_vs = past_kvs
-                ks = tc.cat((past_ks, ks), dim=1)
-                vs = tc.cat((past_vs, vs), dim=1)
+                ks = tc.cat((past_ks, ks), dim=1).to(tc.device('cuda'))
+                vs = tc.cat((past_vs, vs), dim=1).to(tc.device('cuda'))
             new_kvs = (ks, vs)
 
         qs, ks, vs, bsp = self.attn_preop(qs, ks, vs, sampling)  # [B', ..., H*F]
@@ -290,9 +290,9 @@ class MultiheadSelfAttention(tc.nn.Module):
             r_mat = sinusoidal_embeddings(max_len, d_model, reverse=True)  # [M, I]
             rs = self._r_linear(r_mat)                                     # [M, H*F]
 
-            rs = tc.tile(rs.unsqueeze(0), [batch_size, 1, 1])    # [B', M, H*F]
-            u_ = tc.tile(self._u.unsqueeze(0), [batch_size, 1])  # [B', H*F]
-            v_ = tc.tile(self._v.unsqueeze(0), [batch_size, 1])  # [B', H*F]
+            rs = tc.tile(rs.unsqueeze(0), [batch_size, 1, 1]).to(tc.device('cuda'))    # [B', M, H*F]
+            u_ = tc.tile(self._u.unsqueeze(0), [batch_size, 1]).to(tc.device('cuda'))  # [B', H*F]
+            v_ = tc.tile(self._v.unsqueeze(0), [batch_size, 1]).to(tc.device('cuda'))  # [B', H*F]
             rs, u_, v_ = map(self.split_heads, [rs, u_, v_])     # [B'*H, ..., F]
 
             attn_output = relative_masked_self_attention(
