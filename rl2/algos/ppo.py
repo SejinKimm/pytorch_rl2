@@ -178,11 +178,8 @@ def training_loop(
 
     for pol_iter in range(pol_iters_so_far, max_pol_iters):
         # collect meta-episodes...
-        print("Total:", meta_episodes_per_policy_update)
         meta_episodes = list()
         for i in range(1, meta_episodes_per_policy_update + 1):
-            if(i % 100 == 0):
-                print("!!!!!!!!!!!!!!!!!!!", i)
             # collect one meta-episode and append it to the list
             meta_episode = generate_meta_episode(
                 env=env,
@@ -225,7 +222,6 @@ def training_loop(
                     list(map(lambda m: m.advs, meta_episodes)))
                 print(f"Mean advantage: {mean_adv_r0}")
 
-        print("!!!!!!!!!!!!!!")
         # update policy...
         for opt_epoch in range(ppo_opt_epochs):
             idxs = np.random.permutation(meta_episodes_per_policy_update)
