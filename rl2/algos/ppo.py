@@ -62,14 +62,14 @@ def compute_losses(
 
     # input for loss calculations
     B = len(meta_episodes)
-    ac_dummy = tc.zeros(dtype=tc.int64, size=(B,))
-    rew_dummy = tc.zeros(dtype=tc.float32, size=(B,))
-    done_dummy = tc.ones(dtype=tc.float32, size=(B,))
+    ac_dummy = tc.zeros(dtype=tc.int64, size=(B,)).to(tc.device('cuda'))
+    rew_dummy = tc.zeros(dtype=tc.float32, size=(B,)).to(tc.device('cuda'))
+    done_dummy = tc.ones(dtype=tc.float32, size=(B,)).to(tc.device('cuda'))
 
     curr_obs = mb_obs
-    prev_action = tc.cat((ac_dummy.unsqueeze(1), mb_acs[:, 0:-1]), dim=1)
-    prev_reward = tc.cat((rew_dummy.unsqueeze(1), mb_rews[:, 0:-1]), dim=1)
-    prev_done = tc.cat((done_dummy.unsqueeze(1), mb_dones[:, 0:-1]), dim=1)
+    prev_action = tc.cat((ac_dummy.unsqueeze(1).to(tc.device('cuda')), mb_acs[:, 0:-1].to(tc.device('cuda'))), dim=1).to(tc.device('cuda'))
+    prev_reward = tc.cat((rew_dummy.unsqueeze(1).to(tc.device('cuda')), mb_rews[:, 0:-1].to(tc.device('cuda'))), dim=1).to(tc.device('cuda'))
+    prev_done = tc.cat((done_dummy.unsqueeze(1).to(tc.device('cuda')), mb_dones[:, 0:-1].to(tc.device('cuda'))), dim=1).to(tc.device('cuda'))
     prev_state_policy_net = policy_net.initial_state(batch_size=B)
     prev_state_value_net = value_net.initial_state(batch_size=B)
 
@@ -178,8 +178,11 @@ def training_loop(
 
     for pol_iter in range(pol_iters_so_far, max_pol_iters):
         # collect meta-episodes...
+        print("Total:", meta_episodes_per_policy_update)
         meta_episodes = list()
-        for _ in range(0, meta_episodes_per_policy_update):
+        for i in range(1, meta_episodes_per_policy_update + 1):
+            if(i % 100 == 0):
+                print("!!!!!!!!!!!!!!!!!!!", i)
             # collect one meta-episode and append it to the list
             meta_episode = generate_meta_episode(
                 env=env,
@@ -222,6 +225,7 @@ def training_loop(
                     list(map(lambda m: m.advs, meta_episodes)))
                 print(f"Mean advantage: {mean_adv_r0}")
 
+        print("!!!!!!!!!!!!!!")
         # update policy...
         for opt_epoch in range(ppo_opt_epochs):
             idxs = np.random.permutation(meta_episodes_per_policy_update)
