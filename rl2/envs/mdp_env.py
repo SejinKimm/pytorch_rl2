@@ -4,11 +4,93 @@ Implements the Tabular MDP environment(s) from Duan et al., 2016
 """
 
 from typing import Tuple
-
+import torch
+import operator
 import numpy as np
 
 from rl2.envs.abstract import MetaEpisodicEnv
+from torch.utils.data import Dataset
 
+ACTION_DIC={
+    "start":0,
+    "undo":1,
+    "edit":2,
+    "copyFromInput":3,
+    "rotate":4,
+    "reflecty":5,
+    "reflectx":6,
+    "translate":7,
+    "resizeOutputGrid":8,
+    "resetOutputGrid":9,
+    "selected_cells":10, 
+    "select_fill":11,
+    "none":12,
+    "end":13,
+}
+    
+class Train_StateActionReturnDataset(Dataset):
+    def __init__(self, data_path, data_type=None, step_gap=5, block_size=5*5+2): 
+        self.actions_type = ACTION_DIC
+        self.vocab_size = len(self.actions_type)
+        self.block_size = block_size
+        self.step_gap = step_gap
+        self.data_path = Path(data_path)
+        self.training_path = self.data_path / data_type
+        self.training_tasks = []
+
+
+        for path, _, files in os.walk(self.training_path):
+            for name in files:
+                self.training_tasks.append(os.path.join(path, name))
+
+        self.num_dataset = len(self.training_tasks)
+        
+    def __len__(self):
+        return self.num_dataset
+
+    def __getitem__(self, idx):
+        task_file = self.training_tasks[idx]
+            
+        with open(task_file, 'r') as f:
+            task = json.load(f)
+        
+        #total_step = int(task["total_step"])
+
+        # start_idx = np.random.randint(-self.step_gap+2, total_step-self.step_gap+1)
+        
+        pnp = []
+        states = []
+        actions_str = []
+        actions = []
+        rtgs = []
+        timesteps = []
+        
+        for i in range(len(task["action_sequence"]["action_sequence"])):
+            pnp.append(reduce(operator.add, task["action_sequence"]["action_sequence"][i]["pnp"]))
+            states.append(reduce(operator.add, task["action_sequence"]["action_sequence"][i]["grid"]))
+            actions_str.append(task["action_sequence"]["action_sequence"][i]["action"]["tool"])
+            actions.append(self.actions_type[task["action_sequence"]["action_sequence"][i]["action"]["tool"]])
+            rtgs.append(float(task["action_sequence"]["action_sequence"][i]["reward"]))
+            timesteps.append(int(task["action_sequence"]["action_sequence"][i]["time_step"]))
+        
+        
+        pnp = torch.LongTensor(pnp)
+        #print(pnp.shape)
+        states = torch.LongTensor(states)
+        states = states.view([-1])
+        states = states.contiguous()
+        actions = torch.LongTensor(actions)
+        rtgs = torch.FloatTensor(rtgs)
+        timesteps = torch.LongTensor(timesteps)
+        
+        return states, actions, rtgs, timesteps, pnp
+
+train_dataset = Train_StateActionReturnDataset(
+    data_path = 'ARC_Data',
+    data_type = 'mini_arc_train', 
+    step_gap = 6
+    block_size = 6
+)
 
 class MDPEnv(MetaEpisodicEnv):
     """
